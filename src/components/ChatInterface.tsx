@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { sendMessage as geminiSendMessage } from '../gemini'
+import { sendMessage as geminiSendMessage } from '../services/gemini'
 import { sendMessage as openaiSendMessage } from '../openai'
 import { sendMessage as anthropicSendMessage } from '../anthropic'
 import { TypingIndicator } from './TypingIndicator'
@@ -46,7 +46,19 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   modelVersion,
   welcomeMessage,
 }) => {
-  const [messages, setMessages] = useState<{ role: string; content: string }[]>([])
+  const [messages, setMessages] = useState<Message[]>([])
+  const [currentContext, setCurrentContext] = useState<{
+    entities: string[];
+    lastTopic?: string;
+    lastEntityMentioned?: string;
+  }>({ entities: [] })
+  const [localKnowledgeBase, setLocalKnowledgeBase] = useState(knowledgeBase)
+
+  // Keep local knowledge base in sync with props
+  useEffect(() => {
+    console.log('Knowledge base prop changed:', knowledgeBase);
+    setLocalKnowledgeBase(knowledgeBase);
+  }, [knowledgeBase])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
@@ -67,22 +79,58 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     }
   }, [welcomeMessage]);
 
-  const sendMessageToSelectedAPI = async (message: string) => {
+  const sendMessageToSelectedAPI = async (message: string, options: LLMOptions) => {
     if (!apiKey) {
       throw new Error('API key is missing');
     }
 
-    console.log('Sending message with API key:', {
+    console.log('Sending message to API:', {
       model,
       hasKey: !!apiKey,
-      keyLength: apiKey.length
+      keyLength: apiKey.length,
+      knowledgeBaseSize: options.knowledgeBase?.length || 0,
+      knowledgeBase: options.knowledgeBase?.map(kb => ({
+        name: kb.name,
+        contentLength: kb.content.length,
+        preview: kb.content.substring(0, 100) + '...'
+      })),
+      instructions: options.instructions?.substring(0, 100) + '...'
     });
 
+    let response;
     if (model === 'gemini') {
-      return await geminiSendMessage(message, apiKey);
+      response = await geminiSendMessage(message, apiKey, options);
+    } else if (model === 'openai') {
+      response = await openaiSendMessage(apiKey, message, options);
+    } else if (model === 'anthropic') {
+      response = await anthropicSendMessage(apiKey, message, options);
+    } else {
+      throw new Error(`Unsupported model: ${model}`);
     }
 
+
+
+    return response;
+
     throw new Error(`Unsupported model: ${model}`);
+  };
+
+  // Function to extract entities from text
+  const extractEntities = (text: string): string[] => {
+    const words = text.split(/\s+/);
+    return words
+      .filter(word => word.match(/^[A-Z][a-zA-Z]*(?:\s+[A-Z][a-zA-Z]*)*$/))
+      .filter(word => word.length > 1); // Filter out single letters
+  };
+
+  // Function to update context based on message
+  const updateContext = (message: string) => {
+    const newEntities = extractEntities(message);
+    setCurrentContext(prev => ({
+      entities: [...new Set([...prev.entities, ...newEntities])],
+      lastTopic: newEntities.length > 0 ? newEntities[newEntities.length - 1] : prev.lastTopic,
+      lastEntityMentioned: newEntities.length > 0 ? newEntities[newEntities.length - 1] : prev.lastEntityMentioned
+    }));
   };
 
   const handleSendMessage = async () => {
@@ -93,15 +141,49 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       return;
     }
 
-    const userMessage = { role: 'user', content: input };
+    // Create simple user message
+    const userMessage: Message = { 
+      role: 'user', 
+      content: input
+    };
+
+    // Update messages state with new message
     setMessages((prevMessages) => [...prevMessages, userMessage]);
     setInput('');
     setIsLoading(true);
     setError('');
 
     try {
-      const response = await sendMessageToSelectedAPI(input);
-      const assistantMessage = { role: 'assistant', content: response };
+      // Validate and format knowledge base
+      const formattedKnowledgeBase = Array.isArray(localKnowledgeBase) 
+        ? localKnowledgeBase.filter(kb => kb?.name && kb?.content)
+        : [];
+
+      console.log('Knowledge base:', {
+        size: formattedKnowledgeBase.length,
+        items: formattedKnowledgeBase
+      });
+
+      // Prepare base instructions
+      const baseInstructions = `${instructions}\n\nYou have extensive knowledge about basketball, including players, teams, history, and statistics. You should freely use this knowledge to answer questions.\n\nIf any additional context is provided and relevant to the question, you can incorporate it into your answer. But don't feel constrained by this context - your general knowledge is equally valuable.`;
+
+      // Prepare options
+      const options: LLMOptions = {
+        maxTokens,
+        temperature,
+        modelVersion: modelVersion || 'gpt-3.5-turbo',
+        instructions: baseInstructions,
+        knowledgeBase: formattedKnowledgeBase,
+        conversationHistory: messages
+      };
+
+      const response = await sendMessageToSelectedAPI(input, options);
+      
+      const assistantMessage: Message = { 
+        role: 'assistant', 
+        content: response
+      };
+      
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error: any) {
       console.error('Error in handleSendMessage:', error);

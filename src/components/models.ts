@@ -27,8 +27,9 @@ export const models: ModelConfig[] = [
     ],
     testEndpoint: 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent',
     testMethod: 'POST',
-    getHeaders: () => ({
-      'Content-Type': 'application/json'
+    getHeaders: (config) => ({
+      'Content-Type': 'application/json',
+      'x-goog-api-key': config.apiKey
     }),
     getBody: () => ({
       contents: [
@@ -48,13 +49,10 @@ export const models: ModelConfig[] = [
     requires: ['apiKey', 'organizationId'],
     baseUrl: 'https://api.openai.com',
     versions: [
-      { id: 'gpt-4-o', name: 'GPT-4o' },
-      { id: 'gpt-4-o-mini', name: 'GPT-4o mini' },
+      { id: 'gpt-4-turbo-preview', name: 'GPT-4 Turbo' },
+      { id: 'gpt-4', name: 'GPT-4' },
       { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo' },
-      { id: 'o1', name: 'O1' },
-      { id: 'o1-mini', name: 'O1 Mini' },
-      { id: 'o3', name: 'O3' },
-      { id: 'o3-mini', name: 'O3 Mini' }
+      { id: 'gpt-3.5-turbo-16k', name: 'GPT-3.5 Turbo 16K' }
     ],
     testEndpoint: 'https://api.openai.com/v1/models',
     testMethod: 'GET',

@@ -18,22 +18,26 @@ interface KnowledgeItem {
   content: string;
 }
 
+interface KnowledgeBaseItem {
+  name: string;
+  content: string;
+}
+
 interface AssistantConfigurationPanelProps {
   assistant: {
-    name: string
-    instructions: string
-    model: string
-    api_key: string
-    organization_id?: string
-    version?: string
-    maxTokens: number
-    temperature: number
-    knowledge: File[]
-    model_version: string
-    welcomeMessage?: string
-  }
-  onAssistantChange: (newAssistant: any) => void
-  onKnowledgeBaseChange: (knowledgeBase: { name: string; content: string }[]) => void;
+    name: string;
+    instructions: string;
+    model: string;
+    apiKey: string;
+    maxTokens: number;
+    temperature: number;
+    knowledge: KnowledgeBaseItem[];
+    modelVersion: string;
+    organizationId?: string;
+    welcomeMessage?: string;
+  };
+  onAssistantChange: (assistant: any) => void;
+  onKnowledgeBaseChange: (knowledgeBase: KnowledgeBaseItem[]) => void;
   onSave: () => void;
   onBack: () => void;
 }
@@ -70,13 +74,15 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
   onSave,
   onBack,
 }) => {
+  console.log('Rendering AssistantConfigurationPanel with assistant:', assistant);
+
   const [showModelModal, setShowModelModal] = useState(false);
   const [selectedModel, setSelectedModel] = useState<ImportedModelConfig | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [userInstructions, setUserInstructions] = useState(assistant.instructions);
   const [isInstructionsSaved, setIsInstructionsSaved] = useState(false);
-  const [knowledgeBase, setKnowledgeBase] = useState<{ name: string; content: string }[]>([]);
+  const [knowledgeBase, setKnowledgeBase] = useState<KnowledgeBaseItem[]>([]);
   const [showWelcomeModal, setShowWelcomeModal] = useState(false);
 
   const [modelConnection, setModelConnection] = useState({
@@ -201,11 +207,38 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
       console.log('Valid processed files:', validFiles);
       
       if (validFiles.length > 0) {
-        setKnowledgeBase(validFiles);
-        onKnowledgeBaseChange(validFiles);
-        console.log('Knowledge base updated successfully');
+        // Format knowledge base items
+        const formattedKnowledgeBase: KnowledgeBaseItem[] = validFiles.map(file => ({
+          name: file.name,
+          content: file.content.replace(/\s+/g, ' ').trim() // Clean up whitespace
+        }));
+
+        console.log('Formatted knowledge base:', formattedKnowledgeBase);
+
+        // First update the assistant to ensure persistence
+        const updatedAssistant = {
+          ...assistant,
+          knowledge: formattedKnowledgeBase
+        };
+        onAssistantChange(updatedAssistant);
+
+        // Then update local state and notify parent
+        setKnowledgeBase(formattedKnowledgeBase);
+        onKnowledgeBaseChange(formattedKnowledgeBase);
+        
+        // Log the final state
+        console.log('Knowledge base state updated:', {
+          localState: formattedKnowledgeBase,
+          assistantKnowledge: formattedKnowledgeBase,
+          firstItem: formattedKnowledgeBase[0]?.content
+        });
       } else {
         console.error('No valid files were processed');
+        setToast({
+          show: true,
+          message: 'Failed to process knowledge base files',
+          type: 'error'
+        });
       }
     } catch (error) {
       console.error('Error in handleFileUpload:', error);
@@ -216,29 +249,18 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
     return files.every((file) => file.content.trim().length > 0);
   };
 
-    const handleKnowledgeBaseChange = async (files: File[]) => {
-    const processedFiles = await Promise.all(
-      files.map(file => processFile(file))
-    );
 
-    const validFiles = processedFiles.filter((file): file is { name: string; content: string } =>
-      file !== null
-    );
 
-    setKnowledgeBase(validFiles);
-    onKnowledgeBaseChange(validFiles);
-  };
-
+  // Initialize knowledge base from assistant
   useEffect(() => {
-    if (assistant.knowledge && assistant.knowledge.length > 0) {
-      handleFileUpload({
-        target: {
-          files: {
-            ...assistant.knowledge,
-            item: (index: number) => assistant.knowledge[index]
-          } as unknown as FileList
-        }
-      } as React.ChangeEvent<HTMLInputElement>);
+    console.log('Assistant knowledge changed:', assistant.knowledge);
+    if (assistant.knowledge && Array.isArray(assistant.knowledge) && assistant.knowledge.length > 0) {
+      const validKnowledge = assistant.knowledge.filter(kb => kb?.name && kb?.content);
+      if (validKnowledge.length > 0) {
+        console.log('Setting knowledge base from assistant:', validKnowledge);
+        setKnowledgeBase(validKnowledge);
+        onKnowledgeBaseChange(validKnowledge);
+      }
     }
   }, [assistant.knowledge]);
 
@@ -258,33 +280,26 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
     if (assistant.model) {
       handleSave();
     }
-  }, [assistant.model, assistant.api_key, assistant.organization_id, assistant.version]);
+  }, [assistant.model, assistant.apiKey, assistant.organization_id, assistant.version]);
 
   const testApiConnection = async (modelId: string, config: any) => {
     try {
       const selectedModel = models.find((m) => m.id === modelId);
       if (!selectedModel || !selectedModel.testEndpoint) return false;
 
-      // Specjalna obsługa dla Gemini
+      // Handle Gemini
       if (modelId === 'gemini') {
-        const url = `${selectedModel.testEndpoint}?key=${config.api_key}`;
-        
-        const response = await fetch(url, {
+        const response = await fetch(selectedModel.testEndpoint, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            'x-goog-api-key': config.apiKey
           },
           body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  {
-                    text: "Hello",
-                  },
-                ],
-              },
-            ],
-          }),
+            contents: [{
+              parts: [{ text: "Hello" }]
+            }]
+          })
         });
 
         if (!response.ok) {
@@ -299,8 +314,8 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         const response = await fetch('https://api.openai.com/v1/models', {
           method: 'GET',
           headers: {
-            'Authorization': `Bearer ${config.api_key}`,
-            'OpenAI-Organization': config.organization_id || ''
+            'Authorization': `Bearer ${config.apiKey}`,
+            'OpenAI-Organization': config.organizationId || ''
           }
         });
 
@@ -341,8 +356,8 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         ...assistant,
         model: model.id,
         model_version: defaultVersion,
-        api_key: model.apiKey || assistant.api_key || '',
-        organization_id: model.organizationId || assistant.organization_id || ''
+        api_key: model.apiKey,  // Changed from apiKey to api_key
+        organization_id: model.organizationId
       };
 
       console.log('Saving assistant with API key:', {
@@ -351,8 +366,16 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         keyLength: updatedAssistant.api_key?.length
       });
 
+      // Update model connection state
+      setModelConnection({
+        isConnected: true,
+        modelName: `${model.name} (${defaultVersion})`,
+        error: ''
+      });
+
       onAssistantChange(updatedAssistant);
       setSelectedModel(model);
+      setShowModelModal(false);
     }
   };
 
@@ -433,13 +456,13 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         throw new Error('No model selected');
       }
 
-      if (!assistant.api_key) {
+      if (!assistant.api_key) {  // Changed from apiKey to api_key
         throw new Error('API key is required');
       }
 
       const config = {
-        api_key: assistant.api_key,
-        organization_id: assistant.organization_id || '',
+        apiKey: assistant.api_key,  // Changed from apiKey to api_key
+        organizationId: assistant.organization_id || '',
         version: assistant.model_version || '',
         baseUrl: selectedModel.baseUrl,
       };
@@ -447,26 +470,37 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
       const isConnected = await testApiConnection(selectedModel.id, config);
 
       if (isConnected) {
-        // Upewnij się, że klucz API jest zachowany
+        // Update assistant with the verified configuration
         const updatedAssistant = {
           ...assistant,
-          api_key: config.api_key,
-          organization_id: config.organization_id,
+          api_key: config.apiKey,  // Changed from apiKey to api_key
+          organization_id: config.organizationId,
           model_version: config.version
         };
         onAssistantChange(updatedAssistant);
 
         setModelConnection({
           isConnected: true,
-          modelName: selectedModel.name,
+          modelName: `${selectedModel.name} (${config.version})`,
           error: '',
         });
-        setShowModelModal(false);
+
+        setToast({
+          show: true,
+          message: 'Model configuration saved successfully!',
+          type: 'success'
+        });
       } else {
         setModelConnection({
           isConnected: false,
           modelName: '',
           error: 'Failed to connect. Please check your credentials.',
+        });
+
+        setToast({
+          show: true,
+          message: 'Failed to connect. Please check your credentials.',
+          type: 'error'
         });
       }
     } catch (error: any) {
@@ -475,6 +509,12 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         isConnected: false,
         modelName: '',
         error: error.message || 'Connection failed. Please try again.',
+      });
+
+      setToast({
+        show: true,
+        message: error.message || 'Connection failed. Please try again.',
+        type: 'error'
       });
     } finally {
       setIsLoading(false);
@@ -728,7 +768,7 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         onSelectModel={handleModelSelect}
         onClose={closeDialog}
         isVisible={showModelModal}
-        initialApiKey={assistant.api_key || ''}
+        initialApiKey={assistant.apiKey || ''}
         initialOrgId={assistant.organization_id || ''}
         initialVersion={assistant.version || ''}
       />

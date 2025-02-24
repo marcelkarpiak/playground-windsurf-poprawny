@@ -40,6 +40,10 @@ const DialogDescription: React.FC<{ children: React.ReactNode }> = ({ children }
   <p className="text-sm text-gray-400">{children}</p>
 )
 
+const DialogFooter: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <div className="flex justify-end space-x-2 mt-4">{children}</div>
+)
+
 interface ButtonProps {
   children: React.ReactNode
   onClick: () => void
@@ -92,50 +96,93 @@ const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
   initialOrgId,
   initialVersion,
 }) => {
+  const [selectedModelId, setSelectedModelId] = useState<string>(selectedModel?.id || '')
+  const [selectedVersion, setSelectedVersion] = useState<string>(selectedModel?.version || '')
   const [apiConfig, setApiConfig] = useState<{
     apiKey?: string
     organizationId?: string
     version?: string
-  }>({})
+  }>({
+    apiKey: initialApiKey || '',
+    organizationId: initialOrgId || '',
+    version: initialVersion || ''
+  })
+  
+  const currentModel = models.find(m => m.id === selectedModelId)
   const [isValid, setIsValid] = useState(false)
   const [error, setError] = useState('')
 
   useEffect(() => {
-    if (selectedModel) {
-      setApiConfig({
-        apiKey: initialApiKey,
-        organizationId: initialOrgId,
-        version: initialVersion || selectedModel.versions?.[0]?.id
-      })
+    if (currentModel) {
+      setApiConfig(prev => ({
+        ...prev,
+        apiKey: initialApiKey || prev.apiKey || '',
+        organizationId: initialOrgId || prev.organizationId || '',
+        version: initialVersion || prev.version || currentModel.versions?.[0]?.id || ''
+      }))
     }
-  }, [selectedModel, initialApiKey, initialOrgId, initialVersion])
+  }, [currentModel, initialApiKey, initialOrgId, initialVersion])
 
   useEffect(() => {
-    if (selectedModel) {
-      const requiredFields = selectedModel.requires || []
-      const hasAllRequired = requiredFields.every(field => !!apiConfig[field as keyof typeof apiConfig])
-      setIsValid(hasAllRequired)
+    if (!currentModel) {
+      setIsValid(false)
+      return
     }
-  }, [selectedModel, apiConfig])
+
+    const requiredFields = currentModel.requires || []
+    const hasAllRequired = requiredFields.every(field => {
+      const value = apiConfig[field as keyof typeof apiConfig]
+      return value && value.trim() !== ''
+    })
+
+    setIsValid(hasAllRequired && selectedVersion !== '')
+  }, [currentModel, apiConfig, selectedVersion])
 
   const handleSave = () => {
-    if (!selectedModel || !apiConfig.apiKey) {
+    if (!currentModel || !apiConfig.apiKey) {
       setError('API key is required')
       return
     }
 
-    const modelWithConfig = {
-      ...selectedModel,
-      apiKey: apiConfig.apiKey,
-      organizationId: apiConfig.organizationId
+    if (!selectedVersion) {
+      setError('Please select a model version')
+      return
     }
 
-    onSelectModel(modelWithConfig)
-    onClose()
+    const modelWithConfig = {
+      ...currentModel,
+      apiKey: apiConfig.apiKey,
+      organizationId: apiConfig.organizationId,
+      version: selectedVersion
+    }
+
+    // Test the connection before saving
+    try {
+      fetch(currentModel.testEndpoint, {
+        method: currentModel.testMethod,
+        headers: currentModel.getHeaders({
+          apiKey: apiConfig.apiKey,
+          organizationId: apiConfig.organizationId
+        }),
+        ...(currentModel.testMethod === 'POST' && { 
+          body: JSON.stringify(currentModel.getBody()) 
+        })
+      }).then(response => {
+        if (!response.ok) {
+          throw new Error('Connection test failed')
+        }
+        onSelectModel(modelWithConfig)
+        onClose()
+      }).catch(err => {
+        setError(err.message || 'Failed to connect to the model')
+      })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to connect to the model')
+    }
   }
 
   const renderConfigFields = () => {
-    if (!selectedModel) return null
+    if (!currentModel) return null
 
     return (
       <div className="grid gap-4 py-4">
@@ -150,7 +197,7 @@ const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
             placeholder="Enter API Key"
           />
         </div>
-        {selectedModel.requires.includes('organizationId') && (
+        {currentModel.requires.includes('organizationId') && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-gray-300">Organization ID</label>
             <Input
@@ -177,7 +224,43 @@ const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
           </DialogDescription>
         </DialogHeader>
 
-        {renderConfigFields()}
+        <div className="grid gap-4 py-4">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-gray-300">Language Model</label>
+            <select 
+              value={selectedModelId} 
+              onChange={(e) => {
+                setSelectedModelId(e.target.value)
+                setApiConfig({})
+                setSelectedVersion('')
+              }}
+              className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="">Select a model</option>
+              {models.map(model => (
+                <option key={model.id} value={model.id}>{model.name}</option>
+              ))}
+            </select>
+          </div>
+
+          {currentModel?.versions && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-gray-300">Model Version</label>
+              <select
+                value={selectedVersion}
+                onChange={(e) => setSelectedVersion(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                <option value="">Select a version</option>
+                {currentModel.versions.map(version => (
+                  <option key={version.id} value={version.id}>{version.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {currentModel && renderConfigFields()}
+        </div>
 
         {error && <p className="text-red-500 text-sm mt-2">{error}</p>}
 
@@ -185,7 +268,10 @@ const ModelSelectionModal: React.FC<ModelSelectionModalProps> = ({
           <Button onClick={onClose} variant="outline">
             Cancel
           </Button>
-          <Button onClick={handleSave} disabled={!isValid}>
+          <Button 
+            onClick={handleSave} 
+            disabled={!isValid || !selectedModelId || !selectedVersion}
+          >
             Save
           </Button>
         </DialogFooter>
