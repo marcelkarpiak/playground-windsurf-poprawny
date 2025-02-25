@@ -1,107 +1,96 @@
 import { LLMOptions } from './types/llm';
 
-const API_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent';
+const generateUrl = (version: string, model: string, apiKey: string) => 
+  `https://generativelanguage.googleapis.com/${version}/models/${model}:generateContent?key=${apiKey}`;
+
+const MAX_RETRIES = 3;
+const RETRY_DELAY = 1000; // ms
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export const sendMessage = async (apiKey: string, message: string, options: LLMOptions = {}) => {
-  try {
-    const url = `${API_ENDPOINT}?key=${apiKey}`;
-    
-    // Prepare system message with instructions and knowledge base
-    let systemMessage = `${options.instructions || "You are a helpful assistant."}\n\n`;
-    
-    // If there's a knowledge base, format it as a structured reference document
-    if (options.knowledgeBase && options.knowledgeBase.length > 0) {
-      systemMessage += "You have access to the following knowledge base documents:\n";
-      
-      options.knowledgeBase.forEach(kb => {
-        systemMessage += `\n=== START OF DOCUMENT: ${kb.name} ===\n${kb.content}\n=== END OF DOCUMENT: ${kb.name} ===\n`;
-      });
-      
-      systemMessage += `\n\nIMPORTANT INSTRUCTIONS FOR USING KNOWLEDGE BASE:\n
-1. ALWAYS use the information from the knowledge base documents when answering questions
-2. If a question can be answered using the knowledge base, provide a detailed answer based on that information
-3. Maintain context between messages - if a follow-up question refers to something mentioned earlier, use that context
-4. If you can't find relevant information in the knowledge base, use your general knowledge but clearly indicate this
-5. If you're using information from a specific document, mention which document you're referencing
-6. Format your responses in a clear and structured way`;
-    }
+  const versions = ['v1', 'v1beta'];
+  const models = ['gemini-pro', 'gemini-1.5-pro'];
+  let lastError = null;
 
-    // Process conversation history to extract context and entities
-    let conversationContext = "";
-    let contextEntities = new Set<string>();
-    
-    if (options.conversationHistory && options.conversationHistory.length > 0) {
-      // Get last 10 messages for better context
-      const recentMessages = options.conversationHistory.slice(-10);
+  for (const version of versions) {
+    for (const model of models) {
+      let retries = 0;
       
-      // Extract potential entities (proper nouns) from conversation
-      recentMessages.forEach(msg => {
-        const words = msg.content.split(' ');
-        words.forEach(word => {
-          if (word.match(/^[A-Z][a-z]+/)) {
-            contextEntities.add(word);
+      while (retries < MAX_RETRIES) {
+        try {
+          const url = generateUrl(version, model, apiKey);
+          console.log(`Trying Gemini API with ${version}/${model} (attempt ${retries + 1}/${MAX_RETRIES})`);
+
+          // Prepare system message with instructions and knowledge base
+          let systemMessage = `${options.instructions || "You are a helpful assistant."}\n\n`;
+          
+          const knowledgeBase = options.knowledgeBase || [];
+          if (knowledgeBase.length > 0) {
+            systemMessage += "You have access to the following knowledge base documents:\n";
+            knowledgeBase.forEach(kb => {
+              systemMessage += `\n=== START OF DOCUMENT: ${kb.name} ===\n${kb.content}\n=== END OF DOCUMENT: ${kb.name} ===\n`;
+            });
           }
-        });
-      });
-      
-      conversationContext = recentMessages
-        .map(msg => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-        .join('\n\n');
 
-      // Enhance system message with context and entities
-      systemMessage = `${systemMessage}\n\n` +
-        `Recent conversation context:\n${conversationContext}\n\n` +
-        `Current context entities: ${Array.from(contextEntities).join(', ')}\n\n` +
-        `CRITICAL INSTRUCTIONS FOR MAINTAINING CONTEXT:\n` +
-        `1. You MUST maintain conversation context. When you see pronouns like 'he', 'she', 'they', 'it', always refer to the most recently discussed entities.\n` +
-        `2. The current conversation involves these key entities: ${Array.from(contextEntities).join(', ')}. Use this context for resolving pronouns.\n` +
-        `3. For questions like 'What about X?' or 'What did they do?', always reference the context from previous messages.\n` +
-        `4. If a question seems incomplete, look at the previous messages to understand what it's referring to.\n` +
-        `5. Be concise but informative in your responses.\n` +
-        `6. When using the knowledge base, explicitly mention which document you're referencing.\n` +
-        `7. Use the knowledge base as your primary source of information`;
-    }
+          // Prepare request body
+          const requestBody = {
+            contents: [{
+              parts: [{
+                text: `${systemMessage}\n\nCurrent question: ${message}`
+              }]
+            }],
+            generationConfig: {
+              maxOutputTokens: options.maxTokens || 1000,
+              temperature: options.temperature || 0.7,
+              topP: 0.8,
+              topK: 40
+            }
+          };
 
-    // Prepare request with enhanced context management
-    const requestBody = {
-      contents: [
-        {
-          parts: [
-            {
-              text: `${systemMessage}\n\nCurrent question: ${message}\n\nRemember to:\n1. Answer based on the knowledge base when possible\n2. Maintain conversation context\n3. Be specific about which document you're referencing`,
+          const response = await fetch(url, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
             },
-          ],
-        },
-      ],
-      generationConfig: {
-        maxOutputTokens: options.maxTokens || 1000,
-        temperature: options.temperature || 0.7,
-        topP: 0.8, // Add some randomness while maintaining coherence
-        topK: 40,  // Limit vocabulary diversity for more focused responses
+            body: JSON.stringify(requestBody),
+          });
+
+          const data = await response.json();
+
+          if (!response.ok) {
+            const error = new Error(
+              `Gemini API error: ${response.status} - ${
+                data.error?.message || 'Unknown error'
+              }`
+            ) as Error & { status?: number };
+            error.status = response.status;
+            throw error;
+          }
+
+          // Jeśli zapytanie się powiodło, zwróć wynik
+          return data.candidates[0].content.parts[0].text;
+        } catch (error: any) {
+          console.warn(`Failed with ${version}/${model} (attempt ${retries + 1}):`, error);
+          
+          // Sprawdź czy warto ponawiać próbę
+          if (error.status === 503 && retries < MAX_RETRIES - 1) {
+            retries++;
+            const delay = RETRY_DELAY * retries;
+            console.log(`Service unavailable, retrying in ${delay}ms...`);
+            await sleep(delay);
+            continue;
+          }
+          
+          // Zapisz błąd i spróbuj następnej kombinacji wersji/modelu
+          lastError = error;
+          break;
+        }
       }
-    };
-
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(requestBody),
-    });
-
-    const data = await response.json();
-
-    if (!response.ok) {
-      throw new Error(
-        `Gemini API error: ${response.status} - ${
-          data.error?.message || 'Unknown error'
-        }`
-      );
     }
-
-    return data.candidates[0].content.parts[0].text;
-  } catch (error) {
-    console.error('Gemini API error:', error);
-    throw error;
   }
+
+  // Jeśli wszystkie próby zawiodły, rzuć ostatni błąd
+  console.error('All Gemini API attempts failed:', lastError);
+  throw lastError || new Error('Failed to connect to Gemini API');
 };
