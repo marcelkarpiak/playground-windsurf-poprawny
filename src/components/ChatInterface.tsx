@@ -240,7 +240,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       });
 
       // Prepare base instructions
-      const baseInstructions = `${instructions}\n\nYou have extensive knowledge about basketball, including players, teams, history, and statistics. You should freely use this knowledge to answer questions.\n\nIf any additional context is provided and relevant to the question, you can incorporate it into your answer. But don't feel constrained by this context - your general knowledge is equally valuable.`;
+      const baseInstructions = `${instructions}`;
 
       // Prepare options
       const options: LLMOptions = {
