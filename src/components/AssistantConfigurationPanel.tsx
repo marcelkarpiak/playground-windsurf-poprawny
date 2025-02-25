@@ -5,6 +5,8 @@ import { ModelConfig as ImportedModelConfig, models } from './models'
 import ModelVersionSelect from './ModelVersionSelect'
 import WelcomeMessageModal from './WelcomeMessageModal'
 import Toast from "./Toast"
+import { supabase } from '../config/supabase'
+import { useAuth } from './AuthProvider'
 
 // Usuń import pdfjs i dodaj deklarację typów dla window
 declare global {
@@ -104,6 +106,9 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
 
   // Dodaj ref do śledzenia stanu aktualizacji
   const isUpdatingRef = useRef(false);
+
+  // Dodaj hook useAuth
+  const { user } = useAuth();
 
   // Przenieś useEffect tutaj, na początek komponentu
   useEffect(() => {
@@ -419,8 +424,8 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
     setError('');
   };
 
-  const handleSaveAssistant = () => {
-    // Walidacja przed zapisem
+  const handleSaveAssistant = async () => {
+    // Validation before saving
     if (!assistant.name) {
       setToast({
         show: true,
@@ -439,16 +444,115 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
       return;
     }
 
-    if (!assistant.model || !assistant.modelVersion) {
+    try {
+      setIsLoading(true);
+      
+      // 1. Prepare assistant data
+      const assistantData = {
+        ...(assistant.id && { id: assistant.id }), // Dodaj ID tylko jeśli już istnieje
+        name: assistant.name,
+        instructions: assistant.instructions,
+        model: assistant.model,
+        model_version: assistant.modelVersion,
+        api_key: assistant.apiKey,
+        max_tokens: assistant.maxTokens,
+        temperature: assistant.temperature,
+        organization_id: assistant.organizationId,
+        welcome_message: assistant.welcomeMessage,
+        user_id: user?.id  // User from AuthContext
+      };
+      
+      console.log("Assistant data to save:", assistantData);
+      
+      // 2. Save the assistant
+      let assistantId = assistant.id;
+      
+      if (assistantId) {
+        // Update existing assistant
+        const { error } = await supabase
+          .from('assistants')
+          .update(assistantData)
+          .eq('id', assistantId);
+          
+        if (error) {
+          console.error("Error while updating assistant:", error);
+          throw error;
+        }
+        
+        console.log("Assistant updated successfully, ID:", assistantId);
+      } else {
+        // Create new assistant - let Supabase generate the ID
+        const { data, error } = await supabase
+          .from('assistants')
+          .insert(assistantData)
+          .select();
+          
+        if (error) {
+          console.error("Error while saving assistant:", error);
+          throw error;
+        }
+        
+        if (!data || data.length === 0) {
+          throw new Error("Failed to create assistant - no data returned");
+        }
+        
+        assistantId = data[0].id;
+        console.log("New assistant saved successfully, ID:", assistantId);
+      }
+      
+      // 3. If the assistant was saved, handle the knowledge base
+      if (assistantId) {
+        // First delete existing knowledge base items for this assistant
+        const { error: deleteError } = await supabase
+          .from('knowledge_items')
+          .delete()
+          .eq('assistant_id', assistantId);
+          
+        if (deleteError) {
+          console.error("Error while deleting old knowledge base:", deleteError);
+          throw deleteError;
+        }
+        
+        // Then add new knowledge base items
+        if (knowledgeBase.length > 0) {
+          const knowledgeItems = knowledgeBase.map(item => ({
+            assistant_id: assistantId,
+            name: item.name,
+            content: item.content
+          }));
+          
+          console.log("Knowledge base items to save:", knowledgeItems.length);
+          
+          const { error: knowledgeError } = await supabase
+            .from('knowledge_items')
+            .insert(knowledgeItems);
+            
+          if (knowledgeError) {
+            console.error("Error while saving knowledge base:", knowledgeError);
+            throw knowledgeError;
+          }
+          
+          console.log("Knowledge base saved successfully");
+        }
+      }
+      
       setToast({
         show: true,
-        message: 'Please select a model and version',
-        type: 'error',
+        message: 'Assistant saved successfully!',
+        type: 'success'
       });
-      return;
+      
+      onSave();
+    } catch (error: any) {
+      console.error('Save error:', error);
+      setToast({
+        show: true,
+        message: error.message || 'Error while saving assistant',
+        type: 'error'
+      });
+    } finally {
+      setIsLoading(false);
     }
-
-    onSave();
   };
 
   const handleSave = async () => {
