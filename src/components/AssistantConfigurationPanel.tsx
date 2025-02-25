@@ -25,6 +25,7 @@ interface KnowledgeBaseItem {
 
 interface AssistantConfigurationPanelProps {
   assistant: {
+    id?: string;
     name: string;
     instructions: string;
     model: string;
@@ -290,10 +291,10 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
   }, [assistant.model]);
 
   useEffect(() => {
-    if (assistant.model) {
+    if (assistant.model && assistant.apiKey) {
       handleSave();
     }
-  }, [assistant.model, assistant.apiKey, assistant.organization_id, assistant.version]);
+  }, [assistant.model, assistant.apiKey, assistant.organizationId, assistant.modelVersion]);
 
   const testApiConnection = async (modelId: string, config: any) => {
     try {
@@ -363,27 +364,17 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
 
   const handleModelSelect = (model: ImportedModelConfig | null) => {
     if (model) {
-      const defaultVersion = model.versions?.[0]?.id || model.id;
-      
       const updatedAssistant = {
         ...assistant,
         model: model.id,
-        model_version: defaultVersion,
-        api_key: model.apiKey,  // Changed from apiKey to api_key
-        organization_id: model.organizationId
+        modelVersion: model.versions?.[0]?.id || model.id,
+        apiKey: model.apiKey,
+        organizationId: model.organizationId
       };
 
-      console.log('Saving assistant with API key:', {
-        model: updatedAssistant.model,
-        hasKey: !!updatedAssistant.api_key,
-        keyLength: updatedAssistant.api_key?.length
-      });
-
-      // Update model connection state
-      setModelConnection({
-        isConnected: true,
-        modelName: `${model.name} (${defaultVersion})`,
-        error: ''
+      console.log('Updating assistant with model:', {
+        modelId: model.id,
+        hasApiKey: !!updatedAssistant.apiKey
       });
 
       onAssistantChange(updatedAssistant);
@@ -448,7 +439,7 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
       return;
     }
 
-    if (!assistant.model || !assistant.model_version) {
+    if (!assistant.model || !assistant.modelVersion) {
       setToast({
         show: true,
         message: 'Please select a model and version',
@@ -466,27 +457,35 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
 
     try {
       if (!selectedModel) {
-        throw new Error('No model selected');
+        console.log('No model selected, skipping API test');
+        return;
       }
 
-      if (!assistant.api_key) {  // Changed from apiKey to api_key
-        throw new Error('API key is required');
+      if (!assistant.apiKey) {
+        console.log('No API key provided, skipping API test');
+        return;
       }
 
       const config = {
-        apiKey: assistant.api_key,  // Changed from apiKey to api_key
-        organizationId: assistant.organization_id || '',
-        version: assistant.model_version || '',
+        apiKey: assistant.apiKey,
+        organizationId: assistant.organizationId || '',
+        version: assistant.modelVersion || '',
         baseUrl: selectedModel.baseUrl,
       };
+
+      console.log('Testing API connection with config:', {
+        model: selectedModel.id,
+        hasApiKey: !!config.apiKey,
+        hasOrgId: !!config.organizationId,
+        version: config.version
+      });
 
       const isConnected = await testApiConnection(selectedModel.id, config);
 
       if (isConnected) {
-        // Update assistant with the verified configuration
         const updatedAssistant = {
           ...assistant,
-          api_key: config.apiKey,  // Changed from apiKey to api_key
+          api_key: config.apiKey,
           organization_id: config.organizationId,
           model_version: config.version
         };
@@ -508,12 +507,6 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
           isConnected: false,
           modelName: '',
           error: 'Failed to connect. Please check your credentials.',
-        });
-
-        setToast({
-          show: true,
-          message: 'Failed to connect. Please check your credentials.',
-          type: 'error'
         });
       }
     } catch (error: any) {
@@ -574,16 +567,41 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
   }, [knowledgeBase]);
 
   const handleWelcomeMessageSave = (message: string) => {
-    onAssistantChange({
+    if (!message.trim()) return;
+    
+    const updatedAssistant = {
       ...assistant,
-      welcomeMessage: message,
+      welcomeMessage: message.trim()
+    };
+    
+    onAssistantChange(updatedAssistant);
+    setShowWelcomeModal(false);
+    
+    // Pokaż toast z potwierdzeniem
+    setToast({
+      show: true,
+      message: 'Welcome message saved successfully!',
+      type: 'success'
+    });
+
+    // Dodaj log do debugowania
+    console.log('Saving welcome message:', {
+      message: message.trim(),
+      updatedAssistant
     });
   };
 
   const handleRemoveWelcomeMessage = () => {
-    onAssistantChange({
+    const updatedAssistant = {
       ...assistant,
-      welcomeMessage: undefined,
+      welcomeMessage: undefined
+    };
+    
+    onAssistantChange(updatedAssistant);
+    
+    // Dodaj log do debugowania
+    console.log('Removing welcome message:', {
+      updatedAssistant
     });
   };
 
@@ -653,7 +671,7 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
 
       <ModelVersionSelect
         selectedProvider={assistant.model}
-        selectedVersion={assistant.model_version}
+        selectedVersion={assistant.modelVersion}
         onVersionChange={handleVersionChange}
         isConnected={modelConnection.isConnected}
       />
@@ -747,25 +765,27 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
       </div>
 
       <div className="mb-4">
+        <label className="block text-sm font-medium text-gray-300 mb-2">
+          Welcome Message
+        </label>
         {assistant.welcomeMessage ? (
-          <div className="mt-2 bg-gray-700 p-2 rounded">
+          <div className="bg-gray-800 p-4 rounded-md border border-gray-700">
             <div className="flex justify-between items-start">
-              <p className="text-sm text-gray-300">Welcome Message:</p>
+              <p className="text-sm text-gray-300">{assistant.welcomeMessage}</p>
               <button
                 onClick={handleRemoveWelcomeMessage}
-                className="text-red-500 hover:text-red-700"
+                className="text-gray-400 hover:text-gray-300 ml-2"
               >
                 <XCircle size={16} />
               </button>
             </div>
-            <p className="text-gray-200 mt-1">{assistant.welcomeMessage}</p>
           </div>
         ) : (
           <button
-            className="mt-2 text-blue-500 hover:text-blue-600 text-sm"
             onClick={() => setShowWelcomeModal(true)}
+            className="w-full p-4 text-center text-gray-300 bg-gray-800 rounded-md hover:bg-gray-700"
           >
-            + Add Welcome Message
+            Add Welcome Message
           </button>
         )}
       </div>
@@ -782,8 +802,8 @@ const AssistantConfigurationPanel: React.FC<AssistantConfigurationPanelProps> = 
         onClose={closeDialog}
         isVisible={showModelModal}
         initialApiKey={assistant.apiKey || ''}
-        initialOrgId={assistant.organization_id || ''}
-        initialVersion={assistant.version || ''}
+        initialOrgId={assistant.organizationId || ''}
+        initialVersion={assistant.modelVersion || ''}
       />
 
       <div className="mt-8">

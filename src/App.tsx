@@ -105,6 +105,11 @@ const App: React.FC = () => {
   };
 
   const handleSelectAssistant = (assistant: AssistantDB) => {
+    console.log('Selecting assistant:', {
+      welcome_message: assistant.welcome_message,
+      name: assistant.name
+    });
+    
     const selectedAssistant: Assistant = {
       id: assistant.id,
       name: assistant.name,
@@ -160,6 +165,14 @@ const App: React.FC = () => {
     }
   };
 
+  useEffect(() => {
+    console.log('Current assistant state:', {
+      welcome_message: currentAssistant?.welcome_message,
+      name: currentAssistant?.name,
+      hasAssistant: !!currentAssistant
+    });
+  }, [currentAssistant]);
+
   return (
     <div className="h-screen bg-gray-900">
       {view === 'library' ? (
@@ -176,19 +189,28 @@ const App: React.FC = () => {
               name: currentAssistant.name,
               instructions: currentAssistant.instructions,
               model: currentAssistant.model,
-              api_key: currentAssistant.api_key,
-              organization_id: currentAssistant.organization_id,
-              max_tokens: currentAssistant.max_tokens,
+              apiKey: currentAssistant.api_key,
+              organizationId: currentAssistant.organization_id,
+              maxTokens: currentAssistant.max_tokens,
               temperature: currentAssistant.temperature,
-              knowledge: knowledgeBase, // Use the state instead of currentAssistant.knowledge_base
-              model_version: currentAssistant.model_version,
-              welcome_message: currentAssistant.welcome_message,
+              knowledge: knowledgeBase,
+              modelVersion: currentAssistant.model_version,
+              welcomeMessage: currentAssistant.welcome_message,
             }}
             onAssistantChange={(updatedAssistant) => {
               console.log('Assistant updated:', updatedAssistant);
               setCurrentAssistant({
-                ...updatedAssistant,
-                knowledge_base: updatedAssistant.knowledge || [] // Sync knowledge to knowledge_base
+                ...currentAssistant,
+                api_key: updatedAssistant.apiKey,
+                organization_id: updatedAssistant.organizationId,
+                max_tokens: updatedAssistant.maxTokens,
+                model_version: updatedAssistant.modelVersion,
+                welcome_message: updatedAssistant.welcomeMessage,
+                knowledge_base: updatedAssistant.knowledge || [],
+                name: updatedAssistant.name,
+                instructions: updatedAssistant.instructions,
+                model: updatedAssistant.model,
+                temperature: updatedAssistant.temperature,
               });
             }}
             onKnowledgeBaseChange={(newKnowledgeBase) => {
@@ -206,7 +228,7 @@ const App: React.FC = () => {
             assistantName={currentAssistant.name}
             instructions={currentAssistant.instructions}
             apiKey={currentAssistant.api_key}
-            knowledgeBase={knowledgeBase} // Use the state instead of currentAssistant.knowledge_base
+            knowledgeBase={knowledgeBase}
             maxTokens={currentAssistant.max_tokens}
             temperature={currentAssistant.temperature}
             model={currentAssistant.model}

@@ -4,6 +4,7 @@ import { sendMessage as openaiSendMessage } from '../openai'
 import { sendMessage as anthropicSendMessage } from '../anthropic'
 import { TypingIndicator } from './TypingIndicator'
 import { LLMOptions } from '../types/llm'
+import { RefreshCw } from 'lucide-react'
 
 interface ChatInterfaceProps {
   assistantName: string
@@ -32,6 +33,11 @@ interface APIConfig {
   maxTokens: number;
   temperature: number;
   apiKey: string;
+}
+
+interface Message {
+  role: 'user' | 'assistant';
+  content: string;
 }
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -64,24 +70,89 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   const [error, setError] = useState('')
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
+  // Dodaj debugowanie inicjalizacji
+  useEffect(() => {
+    console.log('ChatInterface initialized with:', {
+      welcomeMessage,
+      assistantName,
+      model,
+      messagesCount: messages.length
+    });
+  }, []);
+
+  // Dodaj useEffect do inicjalizacji wiadomości powitalnej
+  useEffect(() => {
+    console.log('Initial welcome message setup:', {
+      welcomeMessage,
+      hasMessages: messages.length > 0
+    });
+    
+    if (welcomeMessage && messages.length === 0) {
+      setMessages([{
+        role: 'assistant',
+        content: welcomeMessage
+      }]);
+    }
+  }, []); // Uruchom tylko przy montowaniu komponentu
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
   useEffect(scrollToBottom, [messages])
 
+  // Modyfikujemy istniejący useEffect dla welcome message
   useEffect(() => {
+    console.log('Welcome message changed:', {
+      welcomeMessage,
+      currentMessages: messages,
+      hasMessages: messages.length > 0
+    });
+    
     if (welcomeMessage) {
-      setMessages([{
-        role: 'assistant',
-        content: welcomeMessage
-      }]);
+      const hasWelcomeMessage = messages.some(
+        msg => msg.role === 'assistant' && msg.content === welcomeMessage
+      );
+      
+      if (!hasWelcomeMessage) {
+        setMessages(prevMessages => {
+          const newMessages: Message[] = [{
+            role: 'assistant' as const,
+            content: welcomeMessage
+          }, ...prevMessages];
+          
+          console.log('Setting new messages with welcome:', {
+            newMessages,
+            welcomeMessage
+          });
+          
+          return newMessages;
+        });
+      }
+    } else {
+      // Gdy welcome message zostanie usunięta, usuń ją również z chatu
+      setMessages(prevMessages => {
+        // Usuń pierwszą wiadomość jeśli jest to wiadomość powitalna
+        if (prevMessages.length > 0 && prevMessages[0].role === 'assistant') {
+          return prevMessages.slice(1);
+        }
+        return prevMessages;
+      });
     }
-  }, [welcomeMessage]);
+  }, [welcomeMessage]); // Usuń messages z zależności aby uniknąć pętli
 
   const sendMessageToSelectedAPI = async (message: string, options: LLMOptions) => {
+    // Dodaj debugowanie
+    console.log('Checking API configuration:', {
+      hasApiKey: !!apiKey,
+      apiKeyLength: apiKey?.length,
+      model,
+      modelVersion
+    });
+
     if (!apiKey) {
-      throw new Error('API key is missing');
+      console.error('API key is missing in ChatInterface');
+      throw new Error('API key is missing. Please configure the model first.');
     }
 
     console.log('Sending message to API:', {
@@ -108,12 +179,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
       throw new Error(`Unsupported model: ${model}`);
     }
 
-
-
     return response;
-
-    throw new Error(`Unsupported model: ${model}`);
   };
+
+  // Dodaj useEffect do monitorowania zmian apiKey
+  useEffect(() => {
+    console.log('ChatInterface API key status:', {
+      hasApiKey: !!apiKey,
+      apiKeyLength: apiKey?.length
+    });
+  }, [apiKey]);
 
   // Function to extract entities from text
   const extractEntities = (text: string): string[] => {
@@ -201,13 +276,11 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
   }
 
   const formatMessage = (content: string) => {
-    // Podziel tekst na paragrafy
     const paragraphs = content.split('\n').filter(p => p.trim() !== '');
     
     return (
       <>
         {paragraphs.map((paragraph, index) => {
-          // Sprawdź czy to lista
           if (paragraph.startsWith('- ') || paragraph.startsWith('* ')) {
             return (
               <li key={index} className="ml-4 mb-2">
@@ -215,14 +288,13 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </li>
             );
           }
-          // Sprawdź czy to nagłówek
           if (paragraph.startsWith('#')) {
-            const level = paragraph.match(/^#+/)[0].length;
+            const matches = paragraph.match(/^#+/);
+            const level = matches ? matches[0].length : 1;
             const text = paragraph.replace(/^#+\s/, '');
             const className = `text-${['xl', 'lg', 'md'][level - 1] || 'base'} font-bold mb-2`;
             return <h3 key={index} className={className}>{text}</h3>;
           }
-          // Zwykły paragraf
           return (
             <p key={index} className="mb-2">
               {paragraph}
@@ -233,8 +305,35 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({
     );
   };
 
+  // Dodaj debugowanie do handleRefreshChat
+  const handleRefreshChat = () => {
+    console.log('Refreshing chat:', {
+      welcomeMessage,
+      willResetToWelcome: !!welcomeMessage
+    });
+    
+    if (welcomeMessage) {
+      setMessages([{
+        role: 'assistant',
+        content: welcomeMessage
+      }]);
+    } else {
+      setMessages([]);
+    }
+  };
+
   return (
-    <div className="flex-1 p-4 flex flex-col bg-gray-900">
+    <div className="flex-1 flex flex-col h-full">
+      <div className="flex justify-between items-center p-4 border-b border-gray-700">
+        <h2 className="text-xl font-bold text-gray-100">Chat with {assistantName}</h2>
+        <button
+          onClick={handleRefreshChat}
+          className="p-2 text-gray-400 hover:text-white rounded-full hover:bg-gray-700"
+          title="Refresh Chat"
+        >
+          <RefreshCw size={20} />
+        </button>
+      </div>
       <div className="flex-1 overflow-y-auto">
         {messages.map((message, index) => (
           <div
